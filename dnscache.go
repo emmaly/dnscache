@@ -199,6 +199,9 @@ func cacheElapse(rr []dns.RR, seconds uint32) {
 // cacheDuration determines how long an entry should be cached
 func cacheDuration(rr []dns.RR, max time.Duration, empty time.Duration) time.Duration {
 	if len(rr) == 0 {
+		if max < empty {
+			return max
+		}
 		return empty
 	}
 	ttl := rr[0].Header().Ttl
