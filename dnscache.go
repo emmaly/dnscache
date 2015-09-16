@@ -26,13 +26,13 @@ type Request struct {
 }
 
 // New creates a DNS cache with the given DNS lookup function
-func New(cacheMaxTTL, cacheMissTTL time.Duration, lookup func(dns.Question) []dns.RR) *Cache {
+func New(bufferSize int, cacheMaxTTL, cacheMissTTL time.Duration, lookup func(dns.Question) []dns.RR) *Cache {
 	c := &Cache{
-		requestChan:    make(chan Request),
-		responseChan:   make(chan response),
-		expirationChan: make(chan cacheKey),
-		clearChan:      make(chan struct{}),
-		stopChan:       make(chan struct{}),
+		requestChan:    make(chan Request, bufferSize),
+		responseChan:   make(chan response, bufferSize),
+		expirationChan: make(chan cacheKey, bufferSize),
+		clearChan:      make(chan struct{}, bufferSize),
+		stopChan:       make(chan struct{}, bufferSize),
 		cacheMaxTTL:    cacheMaxTTL,
 		cacheMissTTL:   cacheMissTTL,
 		lookup:         lookup,

@@ -127,9 +127,9 @@ func answerA(q dns.Question, value net.IP) dns.RR {
 	return answer
 }
 
-func newSampleCache(poolSize int, seed int64, maxTTL, missTTL time.Duration) (*samplePool, *Cache) {
+func newSampleCache(poolSize, bufferSize int, seed int64, maxTTL, missTTL time.Duration) (*samplePool, *Cache) {
 	sample := generateSamplePool(poolSize, seed)
-	cache := New(maxTTL, missTTL, sample.LookupFunc())
+	cache := New(bufferSize, maxTTL, missTTL, sample.LookupFunc())
 	return sample, cache
 }
 
@@ -143,8 +143,8 @@ func printRecords(rr []dns.RR) {
 
 var tempRR []dns.RR
 
-func benchmark(b *testing.B, poolSize int, seed int64) {
-	sample, cache := newSampleCache(poolSize, seed, time.Minute*5, time.Second*30)
+func benchmark(b *testing.B, poolSize, bufferSize int, seed int64) {
+	sample, cache := newSampleCache(poolSize, bufferSize, seed, time.Minute*5, time.Second*30)
 	//total := b.N
 	total := b.N
 	requests := make([]Request, total)
@@ -171,5 +171,5 @@ func benchmark(b *testing.B, poolSize int, seed int64) {
 	cache.Stop()
 }
 
-func BenchmarkRandPool100(b *testing.B)  { benchmark(b, 100, 78897) }
-func BenchmarkRandPool1000(b *testing.B) { benchmark(b, 1000, 215487113) }
+func BenchmarkRandPool100(b *testing.B)  { benchmark(b, 100, 0, 78897) }
+func BenchmarkRandPool1000(b *testing.B) { benchmark(b, 1000, 0, 215487113) }
