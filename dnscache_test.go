@@ -1,6 +1,7 @@
 package dnscache
 
 import (
+	"fmt"
 	"math/rand"
 	"net"
 	"testing"
@@ -132,19 +133,43 @@ func newSampleCache(poolSize int, seed int64, maxTTL, missTTL time.Duration) (*s
 	return sample, cache
 }
 
-func benchmark(b *testing.B, poolSize int, seed int64) {
-	sample, cache := newSampleCache(poolSize, seed, time.Minute*5, time.Second*30)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		for _, q := range sample.queries {
-			req := Request{
-				Question:     q,
-				ResponseChan: make(chan []dns.RR),
-			}
-			cache.Lookup(req)
-		}
+func printRecords(rr []dns.RR) {
+	if len(rr) == 1 {
+		fmt.Printf("%v\n", rr[0])
+	} else {
+		fmt.Printf("%v\n", rr)
 	}
 }
 
-func BenchmarkRandPool100(b *testing.B)  { benchmark(b, 10, 78897) }
-func BenchmarkRandPool1000(b *testing.B) { benchmark(b, 20, 215487113) }
+var tempRR []dns.RR
+
+func benchmark(b *testing.B, poolSize int, seed int64) {
+	sample, cache := newSampleCache(poolSize, seed, time.Minute*5, time.Second*30)
+	//total := b.N
+	total := b.N
+	requests := make([]Request, total)
+	k := 0
+	for k < total {
+		for _, q := range sample.queries {
+			requests[k] = Request{
+				Question:     q,
+				ResponseChan: make(chan []dns.RR),
+			}
+			k++
+			if k >= total {
+				break
+			}
+		}
+	}
+	b.ResetTimer()
+	for i := range requests {
+		cache.Lookup(requests[i])
+	}
+	for i := range requests {
+		tempRR = <-requests[i].ResponseChan
+	}
+	cache.Stop()
+}
+
+func BenchmarkRandPool100(b *testing.B)  { benchmark(b, 100, 78897) }
+func BenchmarkRandPool1000(b *testing.B) { benchmark(b, 1000, 215487113) }
