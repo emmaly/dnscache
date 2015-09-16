@@ -13,6 +13,7 @@ type Cache struct {
 	responseChan   chan response
 	expirationChan chan cacheKey
 	clearChan      chan struct{}
+	stopChan       chan struct{}
 	cacheMaxTTL    time.Duration
 	cacheMissTTL   time.Duration
 	lookup         func(dns.Question) []dns.RR
@@ -31,6 +32,7 @@ func New(cacheMaxTTL, cacheMissTTL time.Duration, lookup func(dns.Question) []dn
 		responseChan:   make(chan response),
 		expirationChan: make(chan cacheKey),
 		clearChan:      make(chan struct{}),
+		stopChan:       make(chan struct{}),
 		cacheMaxTTL:    cacheMaxTTL,
 		cacheMissTTL:   cacheMissTTL,
 		lookup:         lookup,
@@ -60,6 +62,11 @@ func (c *Cache) Expire(q dns.Question) {
 // Clear will remove all recorded answers from the cache
 func (c *Cache) Clear() {
 	c.clearChan <- struct{}{}
+}
+
+// Stop will shut down the cache's processor
+func (c *Cache) Stop() {
+	c.stopChan <- struct{}{}
 }
 
 type response struct {
@@ -101,7 +108,10 @@ func (c *Cache) process() {
 				rr := cacheCopy(entry.RR)
 				cacheElapse(rr, uint32(elapsed/time.Second))
 				//fmt.Printf("DNSCACHE HIT:         \t%v\t#%d\n", key, entry.HitCount)
-				req.ResponseChan <- rr
+				go func() {
+					// Send responses via a separate goroutine so that we don't deadlock
+					req.ResponseChan <- rr
+				}()
 			} else {
 				if ok {
 					//fmt.Printf("DNSCACHE EXPIRED: %v\n", key)
@@ -142,8 +152,19 @@ func (c *Cache) process() {
 			}
 			requests := pending[key]
 			delete(pending, key)
-			for _, req := range requests {
-				req.ResponseChan <- cacheCopy(resp.RR)
+			n := len(requests)
+			if n > 0 {
+				output := cacheCopy(resp.RR) // Keep clients from reaching into cached data
+				// Send responses via a separate goroutine so that we don't deadlock
+				go func() {
+					if n == 1 {
+						requests[0].ResponseChan <- output
+					} else {
+						for _, req := range requests {
+							req.ResponseChan <- cacheCopy(output) // Keep requestors from reaching into each other's data
+						}
+					}
+				}()
 			}
 		case key := <-c.expirationChan:
 			now := time.Now()
@@ -170,6 +191,13 @@ func (c *Cache) process() {
 				entry.Timer.Stop()
 			}
 			data = make(map[cacheKey]*cacheValue)
+		case <-c.stopChan:
+			// FIXME: Clean up outstanding requests somehow?
+			for _, entry := range data {
+				entry.Timer.Stop()
+			}
+			data = nil
+			return
 		}
 	}
 }
