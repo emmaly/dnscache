@@ -16,18 +16,40 @@ type Cache struct {
 	stopChan       chan struct{}
 	cacheMaxTTL    time.Duration
 	cacheMissTTL   time.Duration
-	lookup         func(dns.Question) []dns.RR
+	lookup         func(Context, dns.Question) []dns.RR
 }
 
-// Request defines a DNS request to be processed by a Cache object
+// Request defines a DNS request to be processed by a Cache object.
 type Request struct {
 	Question     dns.Question
 	Start        time.Time
+	Data         interface{}
 	ResponseChan chan []dns.RR
 }
 
+// Event identifies what kind of event has triggered the lookup.
+type Event uint8
+
+const (
+	// Query indicates that this event is the result of an external query.
+	Query Event = iota
+
+	// Renewal indicates that this event is the result of proactive record
+	// renewal.
+	Renewal
+)
+
+// Context provides contextual information about a DNS lookup, including what
+// event triggered the lookup, when the looup was started, and any additional
+// data that was provided in the original request.
+type Context struct {
+	Event Event
+	Start time.Time
+	Data  interface{}
+}
+
 // New creates a DNS cache with the given DNS lookup function
-func New(bufferSize int, cacheMaxTTL, cacheMissTTL time.Duration, lookup func(dns.Question) []dns.RR) *Cache {
+func New(bufferSize int, cacheMaxTTL, cacheMissTTL time.Duration, lookup func(Context, dns.Question) []dns.RR) *Cache {
 	c := &Cache{
 		requestChan:    make(chan Request, bufferSize),
 		responseChan:   make(chan response, bufferSize),
@@ -44,28 +66,28 @@ func New(bufferSize int, cacheMaxTTL, cacheMissTTL time.Duration, lookup func(dn
 
 // Lookup will retrieve an answer for the given request from the cache if it
 // is present and unexpired, otherwise it will attempt to retrieve the value via
-// the cache's lookup function and cache the returned value
+// the cache's lookup function and cache the returned value.
 func (c *Cache) Lookup(r Request) {
 	c.requestChan <- r
 }
 
-// Insert will insert the given resource records into the cache as a response
+// Insert will insert the given resource records into the cache as a response.
 // to the given question
 func (c *Cache) Insert(q dns.Question, rr []dns.RR) {
 	c.responseChan <- response{Key: cacheKey{q}, RR: rr}
 }
 
-// Expire will remove any answers to the given question from the cache
+// Expire will remove any answers to the given question from the cache.
 func (c *Cache) Expire(q dns.Question) {
 	c.expirationChan <- cacheKey{q}
 }
 
-// Clear will remove all recorded answers from the cache
+// Clear will remove all recorded answers from the cache.
 func (c *Cache) Clear() {
 	c.clearChan <- struct{}{}
 }
 
-// Stop will shut down the cache's processor
+// Stop will shut down the cache's processor.
 func (c *Cache) Stop() {
 	c.stopChan <- struct{}{}
 }
@@ -123,7 +145,7 @@ func (c *Cache) process() {
 				pending[key] = append(requests, req)
 				if !running {
 					go func() {
-						rr := c.lookup(key.Question)
+						rr := c.lookup(Context{Event: Query, Start: bestTime(req.Start, now), Data: req.Data}, key.Question)
 						c.responseChan <- response{Key: key, RR: rr}
 					}()
 				}
@@ -181,7 +203,7 @@ func (c *Cache) process() {
 					if !running {
 						pending[key] = make([]Request, 0)
 						go func() {
-							rr := c.lookup(key.Question)
+							rr := c.lookup(Context{Event: Renewal, Start: now}, key.Question)
 							c.responseChan <- response{Key: key, RR: rr}
 						}()
 					}
@@ -254,4 +276,14 @@ func cacheRefreshDuration(duration, elapsed time.Duration) time.Duration {
 		return remaining / 2
 	}
 	return remaining
+}
+
+// bestTime	returns the most appropriate time that marks the start of
+// something, given a user-provided start time and the current time. If the
+// user-provided time is zero (not provided) then the current time is used.
+func bestTime(start, now time.Time) time.Time {
+	if start.IsZero() {
+		return now
+	}
+	return start
 }
