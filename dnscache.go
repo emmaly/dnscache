@@ -22,6 +22,7 @@ type Cache struct {
 // Request defines a DNS request to be processed by a Cache object
 type Request struct {
 	Question     dns.Question
+	Start        time.Time
 	ResponseChan chan []dns.RR
 }
 
