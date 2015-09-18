@@ -30,6 +30,17 @@ type Request struct {
 // Event identifies what kind of event has triggered the lookup.
 type Event uint8
 
+func (e Event) String() string {
+	switch e {
+	case Query:
+		return "Query"
+	case Renewal:
+		return "Renewal"
+	default:
+		return "Unknown"
+	}
+}
+
 const (
 	// Query indicates that this event is the result of an external query.
 	Query Event = iota
