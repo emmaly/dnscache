@@ -142,10 +142,7 @@ func (c *Cache) process() {
 				rr := cacheCopy(entry.RR)
 				cacheElapse(rr, uint32(elapsed/time.Second))
 				//fmt.Printf("DNSCACHE HIT:         \t%v\t#%d\n", key, entry.HitCount)
-				go func() {
-					// Send responses via a separate goroutine so that we don't deadlock
-					req.ResponseChan <- rr
-				}()
+				go c.respond(req, rr) // Send responses via a separate goroutine so that we don't deadlock
 			} else {
 				if ok {
 					//fmt.Printf("DNSCACHE EXPIRED: %v\n", key)
@@ -155,10 +152,8 @@ func (c *Cache) process() {
 				requests, running := pending[key]
 				pending[key] = append(requests, req)
 				if !running {
-					go func() {
-						rr := c.lookup(Context{Event: Query, Start: bestTime(req.Start, now), Data: req.Data}, key.Question)
-						c.responseChan <- response{Key: key, RR: rr}
-					}()
+					start := bestTime(req.Start, now)
+					go c.fetch(start, key, req.Data)
 				}
 			}
 		case resp := <-c.responseChan:
@@ -188,17 +183,13 @@ func (c *Cache) process() {
 			delete(pending, key)
 			n := len(requests)
 			if n > 0 {
-				output := cacheCopy(resp.RR) // Keep clients from reaching into cached data
+				rr := cacheCopy(resp.RR) // Keep clients from reaching into cached data
 				// Send responses via a separate goroutine so that we don't deadlock
-				go func() {
-					if n == 1 {
-						requests[0].ResponseChan <- output
-					} else {
-						for _, req := range requests {
-							req.ResponseChan <- cacheCopy(output) // Keep requestors from reaching into each other's data
-						}
-					}
-				}()
+				if n == 1 {
+					go c.respond(requests[0], rr)
+				} else {
+					go c.respondMultiple(requests, rr)
+				}
 			}
 		case key := <-c.expirationChan:
 			now := time.Now()
@@ -213,10 +204,7 @@ func (c *Cache) process() {
 					_, running := pending[key]
 					if !running {
 						pending[key] = make([]Request, 0)
-						go func() {
-							rr := c.lookup(Context{Event: Renewal, Start: now}, key.Question)
-							c.responseChan <- response{Key: key, RR: rr}
-						}()
+						go c.renew(now, key)
 					}
 				}
 			}
@@ -234,6 +222,26 @@ func (c *Cache) process() {
 			return
 		}
 	}
+}
+
+func (c *Cache) fetch(start time.Time, key cacheKey, data interface{}) {
+	rr := c.lookup(Context{Event: Query, Start: start, Data: data}, key.Question)
+	c.responseChan <- response{Key: key, RR: rr}
+}
+
+func (c *Cache) respond(request Request, rr []dns.RR) {
+	request.ResponseChan <- rr
+}
+
+func (c *Cache) respondMultiple(requests []Request, rr []dns.RR) {
+	for _, req := range requests {
+		req.ResponseChan <- cacheCopy(rr) // Keep requestors from reaching into each other's data
+	}
+}
+
+func (c *Cache) renew(start time.Time, key cacheKey) {
+	rr := c.lookup(Context{Event: Renewal, Start: start}, key.Question)
+	c.responseChan <- response{Key: key, RR: rr}
 }
 
 // cacheCopy performs a deep copy of the given resource records
