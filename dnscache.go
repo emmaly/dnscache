@@ -204,10 +204,10 @@ func (c *Cache) process() {
 			now := time.Now()
 			if entry, ok := data[key]; ok {
 				if entry.Expiration.After(now) {
+					entry.Timer.Reset(entry.Expiration.Sub(now))
+				} else {
 					entry.Timer.Stop()
 					delete(data, key)
-				} else {
-					entry.Timer.Reset(entry.Expiration.Sub(now))
 				}
 				if entry.HitCount > 0 {
 					_, running := pending[key]
